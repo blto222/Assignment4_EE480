@@ -81,7 +81,7 @@ module decode (opout, regdst, skip, opin, ir);
       0001: begin
         case (ir `Treg)
           0000: opout <= `OPcall;
-          0001: opout <= `OPjump
+          0001: opout <= `OPjump;
           0011: opout <= `OPjumpf;
         endcase
         skip <= 1;
@@ -123,15 +123,10 @@ module alu(result, op, in1, in2, addr);
       `OPsll: begin result <= in1 << (in2 & 15); end
       `OPli8: begin result <= addr; result[15:8] <= {8{addr [7]}}; end
       `OPlu8: begin result <= (in1 & 16'h00ff) | (addr << 8); end    
-      `OPsz: begin
-        case (addr[3:0])
-          `OPneg: begin result <= -in1; end
-          `OPlnot: begin result <= ~in1; end
-          `OPload: ;
-          `OPstore: ;
-          default: begin result <= in1; end
-        endcase
-      end
+      `OPneg: begin result <= -in1; end
+      `OPlnot: begin result <= ~in1; end
+      `OPload: ;
+      `OPstore: ;
       default: begin result = in1; end
     endcase
   end
@@ -149,6 +144,7 @@ module processor(halt, reset, clk);
   wire `OP op;
   wire `RNAME regdst;
   wire `WORD res;
+  wire skip;
   reg `OP s0op, s1op, s2op, s1op2;
   reg `RNAME s0src1, s0src2, s0dst, s0regdst, s1regdst, s2regdst;
   reg `WORD pc;
@@ -157,9 +153,8 @@ module processor(halt, reset, clk);
   reg `WORD s0ir, s1ir;
   reg `addr s1addr;
   reg `CALLST retaddr;
-  reg `ENSTK enable;
-  reg skip;
   reg [3:0] forwarded;
+  reg atleast1enabled;
   
   always @(reset) begin
     halt = 0;
@@ -183,9 +178,9 @@ module processor(halt, reset, clk);
   always @(*) ir = mainmem[pc];
   
   always @(*) newpc = (((s0op == `OPcall || s0op== `OPjump)) ? ir :
-                       (/*If all are disabled*/) ? s0ir : 
+                       (atleast1enabled) ? s0ir : 
                        (s1op == `OPjumpf) ? pc :
-                       ((ir `Opcode == `OPnoreg) && (ir `Treg == `OPret)) ? retaddr[15:0] :
+                       ((op == `OPret)) ? retaddr[15:0] :
                        (pc + 1));
   
   always @(*) forwarded[0] = (s1regdst && (s0src1 == s1regdst)) ? 1 : 0;
@@ -200,7 +195,7 @@ module processor(halt, reset, clk);
   always @(posedge clk) begin
     if (!halt) begin
       //Potentially stuff about enable blocks
-      s0op <= ir `Opcode;
+      s0op <= op;
       s0regdst <= regdst;  
       s0src1 <= (op == `OPlu8) ? ir `Dest : ir `Sreg;
       s0src2 <= ir `Treg;
@@ -212,7 +207,10 @@ module processor(halt, reset, clk);
   
   always @(posedge clk)
     if (!halt) begin
+      if ((s0op == `OPcall) && ~((s1op == `OPjumpf) && (s1srcval2 == 0))) retaddr <= {retaddr[47:0], pc + 16'h0001};
+      if ((s0op == `OPret) && ~((s1op == `OPjumpf) && (s1srcval2 == 0))) retaddr <= {retaddr[63:48], retaddr[63:16]};
       s1regdst <= s0regdst;
+      s1op <= s0op;
     end
   
   
@@ -221,16 +219,24 @@ module processor(halt, reset, clk);
 endmodule
 
 
-module PE(clk, reset, control, datain, en, dataout);
+module PE(clk, reset, control, source1, source2, datain, en, dataout, halt);
   input clk, reset;
-  input reg [15:0] control;     //control[0:3] will be value forwarding for input registers 1 and 2. The rest should be the 
+  input wire [15:0] control;     //control[0:3] will be value forwarding for input registers 1 and 2. The rest should be the 
                                 // destination register, opcode, and anything else other than actual register data that needs
-                                // to be passed in.
-  input reg `WORD datain;
+                                // to be passed in. 
+                                //control[9:4] will be the opcode from CU. 
+                                //control[13:10] will be register destination (might not need it).
+                                //control[21:14] is the 8-bit immediate value being passed in.
+  input wire `WORD source1;  //Register value of Sreg
+  input wire `WORD source2;  //Register value of Treg
+  input wire `WORD datain;
   output en;
   output `WORD dataout;
+  output reg halt;
   
   wire `WORD res;
+  reg `WORD srcval1, srcval2, dstval, s2val;
+  reg `WORD s0regdst, s1regdst;
   reg `ENSTK enable;
   reg `OP s0op, s1op, s2op, s1op2;
   reg `RNAME regdst;
@@ -243,28 +249,47 @@ module PE(clk, reset, control, datain, en, dataout);
     s2op = `OPnoop;
     s0regdst = 4'b0000;
     s1regdst = 4'b0000;
-    s2regdst = 4'b0000;
+    //s2regdst = 4'b0000;
     enable = 32'h00000001;
     //Possibly memreading for registers? Might do that in the CU though.
   end
   
-  alu myalu(res, s1op, s1srcval1, s1srcval2, s1addr);
+  alu myalu(res, s1op, s1srcval1, s1srcval2, control[21:14]);
   
   // compute srcval1, with value forwarding...
   always @(*) srcval1 = ((control[0] == 1) ? res :
                          ((control[2] == 1) ? s2val :
-                            regfile[s0src1]));
+                            source1));
   
   // compute srcval, with value forwarding...
   always @(*) srcval2 = ((control[1] == 1) ? res :
                          ((control[3] == 1) ? s2val :
-                            regfile[s0src2]));
+                            source2));
   
-  // compute dstval, with value forwarding
-  always @(*) dstval = ((s1regdst && (s0dst == s1regdst)) ? res :
+  // compute dstval, with value forwarding. May be taken care of in CU
+  /*always @(*) dstval = ((s1regdst && (s0dst == s1regdst)) ? res :
                         ((s2regdst && (s0dst == s2regdst)) ? s2val :
-                         regfile[s0dst]));
+                         regfile[s0dst]));*/
   
+  //What might have been done in the instruction fetch stage.
+  always @(posedge clk) begin
+    if (!halt) begin
+      if ((control[9:4] == `OPpushen) && !(s1op == `OPjumpf)) begin enable <= ((enable << 1) | (enable & 1)); end
+      if ((control[9:4] == `OPpopen) && !(s1op == `OPjumpf)) begin enable <= enable >> 1; end
+      if ((control[9:4] == `OPallen) && !(s1op == `OPjumpf)) begin enable <= enable | 1; end
+      s0op <= control[9:4];
+      s0regdst <= control[11:8];    //could be taken care of in CU if registers are.
+    end
+  end
   
-  
+  // what would be done in the register read phase.
+  always @(posedge clk)
+    if (!halt) begin
+      s1op <= s0op;
+      s1regdst <= s0regdst;   //potentially taken care of by CU (data is sent to CU to store)
+      s1srcval1 <= srcval1;
+      s1srcval2 <= srcval2;
+      s2val <= res;
+      if (s1op == `OPtrap) halt <= 1;
+    end
 endmodule
