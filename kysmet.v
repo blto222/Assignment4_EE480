@@ -47,24 +47,25 @@
 
 `define OPnoop     6'b000000        //No-op instruction.
 
-module decode (opout, regdst, opin, ir);
+module decode (opout, regdst, skip, opin, ir);
   output reg `OP opout;
   output reg `RNAME regdst;
+  output reg skip;
   input wire `OP opin;
   input `WORD ir;
   
   always @(opin, ir)begin
     case (ir `Opcode)
-      0100: opout <= `OPadd;
-      0101: opout <= `OPslt;
-      0110: opout <= `OPsra;
-      0111: opout <= `OPmul;
-      1000: opout <= `OPand;
-      1001: opout <= `OPor;
-      1010: opout <= `OPxor;
-      1011: opout <= `OPsll;
-      1100: opout <= `OPli8;
-      1101: opout <= `OPlu8;
+      0100: begin opout <= `OPadd; regdst <= ir `Dest; end
+      0101: begin opout <= `OPslt; regdst <= ir `Dest; end
+      0110: begin opout <= `OPsra; regdst <= ir `Dest; end
+      0111: begin opout <= `OPmul; regdst <= ir `Dest; end
+      1000: begin opout <= `OPand; regdst <= ir `Dest; end
+      1001: begin opout <= `OPor;  regdst <= ir `Dest; end
+      1010: begin opout <= `OPxor; regdst <= ir `Dest; end
+      1011: begin opout <= `OPsll; regdst <= ir `Dest; end
+      1100: begin opout <= `OPli8; regdst <= ir `Dest; end
+      1101: begin opout <= `OPlu8; regdst <= ir `Dest; end
       
       0000: begin
         case (ir `Treg)
@@ -74,6 +75,7 @@ module decode (opout, regdst, opin, ir);
           0100: opout <= `OPpopen;
           1000: opout <= `OPallen;
         endcase
+        regdst <= 0;
       end
         
       0001: begin
@@ -82,9 +84,11 @@ module decode (opout, regdst, opin, ir);
           0001: opout <= `OPjump
           0011: opout <= `OPjumpf;
         endcase
+        skip <= 1;
+        regdst <= 0;
       end
       
-      0010:
+      0010: begin
         case (ir `Treg)
           0000: opout <= `OPlnot;
           0001: opout <= `OPneg;
@@ -94,6 +98,7 @@ module decode (opout, regdst, opin, ir);
           1000: opout <= `OPload;
           1001: opout <= `OPstore;
         endcase
+        regdst <= ir `Dest;
       end
       default: opout <= `OPnoop;
     endcase
@@ -110,7 +115,7 @@ module alu(result, op, in1, in2, addr);
     case (op)
       `OPadd: begin result <= in1 + in2; end
       `OPslt: begin result <= $signed(in1) < $signed(in2); end
-      `OPsra: begin result <= $signed(in1) >>> (in2 & 15); end            //NEED TO FIX. NEEDS SIGN EXTEND. old: in1 >>> (in2 & 15)
+      `OPsra: begin result <= $signed(in1) >>> (in2 & 15); end
       `OPmul: begin result <= in1 * in2; end
       `OPand: begin result <= in1 & in2; end
       `OPor:  begin result <= in1 | in2; end
@@ -124,7 +129,7 @@ module alu(result, op, in1, in2, addr);
           `OPlnot: begin result <= ~in1; end
           `OPload: ;
           `OPstore: ;
-          default: begin result <= in1; end            //As of now, right, left, and gor do this, so this covers all of them.
+          default: begin result <= in1; end
         endcase
       end
       default: begin result = in1; end
@@ -153,6 +158,8 @@ module processor(halt, reset, clk);
   reg `addr s1addr;
   reg `CALLST retaddr;
   reg `ENSTK enable;
+  reg skip;
+  reg [1:0] forwarded;
   
   always @(reset) begin
     halt = 0;
@@ -163,23 +170,43 @@ module processor(halt, reset, clk);
     s0regdst = 4'b0000;
     s1regdst = 4'b0000;
     s2regdst = 4'b0000;
-    enable = 32'h00000001;
     $readmemh0(regfile, 0, 15);
     $readmemh1(mainmem, 0, 65535); 
   end
   
-  decode mydecode(op, regdst, s0op, ir);
+  decode mydecode(op, regdst, skip, s0op, ir);
                   //NEED TO IMPLEMENT THE PROCESSORS.
   
   always @(*) ir = mainmem[pc];
   
-  always @(*) newpc = (((s0op == `OPcall || s0op== `OPjump)/* && (s1dstval == 0)*/) ? ir :
-                       (rrsquash) ? s0ir : 
+  always @(*) newpc = (((s0op == `OPcall || s0op== `OPjump)) ? ir :
+                       (/*If all are disabled*/) ? s0ir : 
                        (s1op == `OPjumpf) ? pc :
                        ((ir `Opcode == `OPnoreg) && (ir `Treg == `OPret)) ? retaddr[15:0] :
                        (pc + 1));
   
+  always @(*) forwarded[0] = (s1regdst && (s0src1 == s1regdst)) ? 1 : 0;
+    
+  always @(*) forwarded[1] = (s1regdst && (s0src2 == s1regdst)) ? 1 : 0;
   
+  //Instruction Fetch
+  always @(posedge clk) begin
+    if (!halt) begin
+      //Potentially stuff about enable blocks
+      s0op <= ir `Opcode;
+      s0regdst <= regdst;  
+      s0src1 <= (op == `OPlu8) ? ir `Dest : ir `Sreg;
+      s0src2 <= ir `Treg;
+      s0dst <= ir `Dest;
+      s0ir <= ir;
+      pc <= newpc;
+    end
+  end
+  
+  always @(posedge clk)
+    if (!halt) begin
+      s1regdst <= s0regdst;
+    end
   
   
   
