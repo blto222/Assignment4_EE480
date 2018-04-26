@@ -159,7 +159,7 @@ module processor(halt, reset, clk);
   reg `CALLST retaddr;
   reg `ENSTK enable;
   reg skip;
-  reg [1:0] forwarded;
+  reg [3:0] forwarded;
   
   always @(reset) begin
     halt = 0;
@@ -175,7 +175,10 @@ module processor(halt, reset, clk);
   end
   
   decode mydecode(op, regdst, skip, s0op, ir);
-                  //NEED TO IMPLEMENT THE PROCESSORS.
+  
+  
+  //NEED TO IMPLEMENT THE PROCESSORS.
+  
   
   always @(*) ir = mainmem[pc];
   
@@ -188,6 +191,10 @@ module processor(halt, reset, clk);
   always @(*) forwarded[0] = (s1regdst && (s0src1 == s1regdst)) ? 1 : 0;
     
   always @(*) forwarded[1] = (s1regdst && (s0src2 == s1regdst)) ? 1 : 0;
+  
+  always @(*) forwarded[2] = (s2regdst && (s0src1 == s1regdst)) ? 1 : 0;
+  
+  always @(*) forwarded[3] = (s2regdst && (s0src2 == s1regdst)) ? 1 : 0;
   
   //Instruction Fetch
   always @(posedge clk) begin
@@ -208,6 +215,55 @@ module processor(halt, reset, clk);
       s1regdst <= s0regdst;
     end
   
+  
+  
+  
+endmodule
+
+
+module PE(clk, reset, control, datain, en, dataout);
+  input clk, reset;
+  input reg [15:0] control;     //control[0:3] will be value forwarding for input registers 1 and 2. The rest should be the 
+                                // destination register, opcode, and anything else other than actual register data that needs
+                                // to be passed in.
+  input reg `WORD datain;
+  output en;
+  output `WORD dataout;
+  
+  wire `WORD res;
+  reg `ENSTK enable;
+  reg `OP s0op, s1op, s2op, s1op2;
+  reg `RNAME regdst;
+  reg `WORD s1srcval1, s1srcval2, s1dstval;
+  
+  always @(reset) begin
+    halt = 0;
+    s0op = `OPnoop;
+    s1op = `OPnoop;
+    s2op = `OPnoop;
+    s0regdst = 4'b0000;
+    s1regdst = 4'b0000;
+    s2regdst = 4'b0000;
+    enable = 32'h00000001;
+    //Possibly memreading for registers? Might do that in the CU though.
+  end
+  
+  alu myalu(res, s1op, s1srcval1, s1srcval2, s1addr);
+  
+  // compute srcval1, with value forwarding...
+  always @(*) srcval1 = ((control[0] == 1) ? res :
+                         ((control[2] == 1) ? s2val :
+                            regfile[s0src1]));
+  
+  // compute srcval, with value forwarding...
+  always @(*) srcval2 = ((control[1] == 1) ? res :
+                         ((control[3] == 1) ? s2val :
+                            regfile[s0src2]));
+  
+  // compute dstval, with value forwarding
+  always @(*) dstval = ((s1regdst && (s0dst == s1regdst)) ? res :
+                        ((s2regdst && (s0dst == s2regdst)) ? s2val :
+                         regfile[s0dst]));
   
   
   
