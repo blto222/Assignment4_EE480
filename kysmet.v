@@ -187,11 +187,11 @@ module processor(halt, reset, clk);
     for (i=1; i < `NumProc+1; i=i+1) begin : Processor
       always @(*) begin
         source1 = (s1op == `OPleft) ? ((forwarded[2]==1) ? writedata[((((i+`NumProc)%`NumProc)*16)-1):(16*(((i+`NumProc)%`NumProc)-1))] : regfile[s0src1][((((i+`NumProc)%`NumProc)*16)-1):(16*(((i+`NumProc)%`NumProc)-1))]) : 
-          (s1op == `OPright) ? ((forwarded[2]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src1][(((i+1)*16)-1):(16*i)]) :
+          (s1op == `OPright) ? ((forwarded[2]==1) ? writedata[((((i+1)%`NumProc)*16)-1):(16*(i%`NumProc))] : regfile[s0src1][((((i+1)%`NumProc)*16)-1):(16*(i%`NumProc))]) :
           (forwarded[2]==1) ? writedata[((i*16)-1):(16*(i-1))] : regfile[s0src1][((i*16)-1):(16*(i-1))];
-        source2 = (s1op == `OPleft) ? ((forwarded[3]==1) ? writedata[((((i+`NumProc)%`NumProc)*16)-1):(16*(((i+`NumProc)%`NumProc)-1))] : regfile[s0src1][((((i+`NumProc)%`NumProc)*16)-1):(16*(((i+`NumProc)%`NumProc)-1))]) : 
-          (s1op == `OPright) ? ((forwarded[3]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src1][(((i+1)*16)-1):(16*i)]) :
-          (forwarded[3]==1) ? writedata[((i*16)-1):(16*(i-1))] : regfile[s0src1][((i*16)-1):(16*(i-1))];
+        source2 = (s1op == `OPleft) ? ((forwarded[3]==1) ? writedata[((((i+`NumProc)%`NumProc)*16)-1):(16*(((i+`NumProc)%`NumProc)-1))] : regfile[s0src2][((((i+`NumProc)%`NumProc)*16)-1):(16*(((i+`NumProc)%`NumProc)-1))]) : 
+          (s1op == `OPright) ? ((forwarded[3]==1) ? writedata[((((i+1)%`NumProc)*16)-1):(16*(i%`NumProc))] : regfile[s0src2][((((i+1)%`NumProc)*16)-1):(16*(i%`NumProc))]) :
+          (forwarded[3]==1) ? writedata[((i*16)-1):(16*(i-1))] : regfile[s0src2][((i*16)-1):(16*(i-1))];
       end
       PE PE(clk, reset, {clk, ir `addr, regdst, op, forwarded}, source1, source2, 
             writedata[((i*16)-1):(16*(i-1))], atleast1enabled[i-1], dataout[((i*16)-1):(16*(i-1))], halt);
