@@ -11,7 +11,7 @@
 `define CALLST      [63:0]
 `define ENSTK       [31:0]
 
-`define NumProc     1
+`define Nproc     2
 
 //Non-extended OPcodes
 `define OPadd      6'b000100
@@ -127,6 +127,8 @@ module alu(result, op, in1, in2, addr);
       `OPlu8: begin result <= (in1 & 16'h00ff) | (addr << 8); end    
       `OPneg: begin result <= -in1; end
       `OPlnot: begin result <= ~in1; end
+      `OPleft: begin result <= in1; end
+      `OPright: begin result <= in1; end
       `OPload: ;
       `OPstore: ;
       default: begin result = in1; end
@@ -138,7 +140,7 @@ module processor(halt, reset, clk);
   output wire halt;
   input reset, clk;
   
-  reg `WORD regfile `REGSIZE;
+  reg [`Nproc*16-1:0] regfile `REGSIZE;
   reg `WORD mainmem `MEMSIZE;
   reg `WORD datamem `MEMSIZE;
   reg `WORD ir, srcval1, srcval2, dstval, newpc;
@@ -155,12 +157,12 @@ module processor(halt, reset, clk);
   reg `addr s1addr;
   reg `CALLST retaddr;
   reg [3:0] forwarded;
-  wire [`NumProc - 1 : 0] atleast1enabled;
-  reg [`NumProc*16-1:0] writedata;
+  wire [`Nproc-1 : 0] atleast1enabled;
+  reg [`Nproc*16-1:0] writedata;
   
   /*TEMPORARY*/
-  reg [`NumProc*16-1:0] datain;
-  wire [`NumProc*16-1:0] dataout;
+  reg [`Nproc*16-1:0] datain;
+  wire [`Nproc*16-1:0] dataout;
   reg `WORD source1, source2;
   reg `WORD gor;
   /*TEMPORARY*/
@@ -180,22 +182,30 @@ module processor(halt, reset, clk);
   decode mydecode(op, regdst, skip, s0op, ir);
   
   //ATTEMPT TO IMPLEMENT PROCESSORS.
-  genvar i;
+  genvar i,j;
   
   generate
     //For loop attempts to complicatedly decide what goes into source1 and source 2. Tries to look for left and right funcitons with value forwarding.
-    for (i=1; i < `NumProc+1; i=i+1) begin : Processor
-      always @(*) begin
-        source1 = (s1op == `OPleft) ? ((forwarded[2]==1) ? writedata[((((i+`NumProc)%`NumProc)*16)-1):(16*(((i+`NumProc)%`NumProc)-1))] : regfile[s0src1][((((i+`NumProc)%`NumProc)*16)-1):(16*(((i+`NumProc)%`NumProc)-1))]) : 
-          (s1op == `OPright) ? ((forwarded[2]==1) ? writedata[((((i+1)%`NumProc)*16)-1):(16*(i%`NumProc))] : regfile[s0src1][((((i+1)%`NumProc)*16)-1):(16*(i%`NumProc))]) :
-          (forwarded[2]==1) ? writedata[((i*16)-1):(16*(i-1))] : regfile[s0src1][((i*16)-1):(16*(i-1))];
-        source2 = (s1op == `OPleft) ? ((forwarded[3]==1) ? writedata[((((i+`NumProc)%`NumProc)*16)-1):(16*(((i+`NumProc)%`NumProc)-1))] : regfile[s0src2][((((i+`NumProc)%`NumProc)*16)-1):(16*(((i+`NumProc)%`NumProc)-1))]) : 
-          (s1op == `OPright) ? ((forwarded[3]==1) ? writedata[((((i+1)%`NumProc)*16)-1):(16*(i%`NumProc))] : regfile[s0src2][((((i+1)%`NumProc)*16)-1):(16*(i%`NumProc))]) :
-          (forwarded[3]==1) ? writedata[((i*16)-1):(16*(i-1))] : regfile[s0src2][((i*16)-1):(16*(i-1))];
-      end
-      PE PE(clk, reset, {clk, ir `addr, regdst, op, forwarded}, source1, source2, 
-            writedata[((i*16)-1):(16*(i-1))], atleast1enabled[i-1], dataout[((i*16)-1):(16*(i-1))], halt);
+    for (i=0; i < `Nproc; i=i+1) begin : Processor
+/*      always @(*) begin
+        source1 = (s1op == `OPleft) ? ((forwarded[2]==1) ? writedata[((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))] : regfile[s0src1][((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))]) : 
+          (s1op == `OPright) ? ((forwarded[2]==1) ? writedata[((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))] : regfile[s0src1][((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))]) :
+        (forwarded[2]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src1][(((i+1)*16)-1):(16*i)];
+        source2 = (s1op == `OPleft) ? ((forwarded[3]==1) ? writedata[((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))] : regfile[s0src2][((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))]) : 
+          (s1op == `OPright) ? ((forwarded[3]==1) ? writedata[((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))] : regfile[s0src2][((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))]) :
+          (forwarded[3]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src2][(((i+1)*16)-1):(16*i)];
+      end*/
+      //Processing Element Instantiation utilizing source1 and source2
+      PE PE(clk, reset, {clk, ir `addr, regdst, op, forwarded}, ((s1op == `OPleft) ? ((forwarded[2]==1) ? writedata[((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))] : regfile[s0src1][((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))]) : 
+          (s1op == `OPright) ? ((forwarded[2]==1) ? writedata[((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))] : regfile[s0src1][((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))]) :
+        (forwarded[2]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src1][(((i+1)*16)-1):(16*i)]), ((s1op == `OPleft) ? ((forwarded[3]==1) ? writedata[((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))] : regfile[s0src2][((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))]) : 
+          (s1op == `OPright) ? ((forwarded[3]==1) ? writedata[((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))] : regfile[s0src2][((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))]) :
+          (forwarded[3]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src2][(((i+1)*16)-1):(16*i)]), 
+            writedata[(((i+1)*16)-1):(16*i)], atleast1enabled[i], dataout[(((i+1)*16)-1):(16*i)], halt);
+      
+      
     end
+    
   endgenerate
   
   always @(*) ir = mainmem[pc];
@@ -239,7 +249,7 @@ module processor(halt, reset, clk);
   //ALU phase (s2regdest)
 always @(posedge clk) if (!halt) begin
   s2regdst <= s1regdst;
-  writedata <=  /*(s1op == `OPload) ? datamem[s1srcval1]*/dataout;      //need to figure out how to do the load and store.
+  writedata <=  /*(s1op == `OPload) ? datamem[s1srcval1] : */dataout;      //need to figure out how to do the load and store.
   // if(s1op == `OPstore) datamem[] <= //dstvalue               //figure out the store
 end
   
@@ -261,6 +271,7 @@ module PE(clk, reset, control, source1, source2, datain, en, dataout, halt);
                                 //control[9:4] will be the opcode from CU. 
                                 //control[13:10] will be register destination (might not need it).
                                 //control[21:14] is the 8-bit immediate value being passed in.
+                                //control[22] is a copy of the clk bit. I wanted to make sure it was working cuz it doesnt' seem to show up.
   input wire `WORD source1;  //Register value of Sreg passed in from CU
   input wire `WORD source2;  //Register value of Treg passed in from CU
   input wire `WORD datain;
@@ -297,7 +308,7 @@ module PE(clk, reset, control, source1, source2, datain, en, dataout, halt);
   // compute srcval, with value forwarding...
   always @(*) srcval2 = ((control[1] == 1) ? res :
                          ((control[3] == 1) ? s2val :
-                            source2));
+                         source2));
   
   // compute dstval, with value forwarding. May be taken care of in CU
   /*always @(*) dstval = ((s1regdst && (s0dst == s1regdst)) ? res :
@@ -319,7 +330,7 @@ module PE(clk, reset, control, source1, source2, datain, en, dataout, halt);
   always @(posedge clk)
     if (!halt) begin
       s1op <= s0op;
-      s1regdst <= s0regdst;   //potentially taken care of by CU (data could be sent to CU to store)
+      s1regdst <= s0regdst;   //potentially taken care of by CU (data sent to CU to store)
       s1srcval1 <= srcval1;
       s1srcval2 <= srcval2;
       if (s1op == `OPtrap) halt <= 1;
