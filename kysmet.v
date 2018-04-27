@@ -196,11 +196,11 @@ module processor(halt, reset, clk);
           (forwarded[3]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src2][(((i+1)*16)-1):(16*i)];
       end*/
       //Processing Element Instantiation utilizing source1 and source2
-      PE PE(clk, reset, {clk, s1ir `addr, regdst, op, forwarded}, ((s1op == `OPleft) ? ((forwarded[2]==1) ? writedata[((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))] : regfile[s0src1][((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))]) : 
-          (s1op == `OPright) ? ((forwarded[2]==1) ? writedata[((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))] : regfile[s0src1][((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))]) :
-        (forwarded[2]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src1][(((i+1)*16)-1):(16*i)]), ((s1op == `OPleft) ? ((forwarded[3]==1) ? writedata[((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))] : regfile[s0src2][((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))]) : 
-          (s1op == `OPright) ? ((forwarded[3]==1) ? writedata[((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))] : regfile[s0src2][((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))]) :
-          (forwarded[3]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src2][(((i+1)*16)-1):(16*i)]), 
+      PE PE(clk, reset, {clk, s1ir `addr, regdst, op, forwarded},
+            ((s0op == `OPleft) ? ((forwarded[2]==1) ? writedata[((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))] : regfile[s0src1][((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))]) : 
+             (s0op == `OPright) ? ((forwarded[2]==1) ? writedata[((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))] : regfile[s0src1][((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))]) :
+             (forwarded[2]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src1][(((i+1)*16)-1):(16*i)]), 
+            (forwarded[3]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src2][(((i+1)*16)-1):(16*i)], 
             writedata[(((i+1)*16)-1):(16*i)], atleast1enabled[i], dataout[(((i+1)*16)-1):(16*i)], halt);
       
       
