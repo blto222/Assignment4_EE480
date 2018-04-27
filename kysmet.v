@@ -196,7 +196,7 @@ module processor(halt, reset, clk);
           (forwarded[3]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src2][(((i+1)*16)-1):(16*i)];
       end*/
       //Processing Element Instantiation utilizing source1 and source2
-      PE PE(clk, reset, {clk, ir `addr, regdst, op, forwarded}, ((s1op == `OPleft) ? ((forwarded[2]==1) ? writedata[((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))] : regfile[s0src1][((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))]) : 
+      PE PE(clk, reset, {clk, s1ir `addr, regdst, op, forwarded}, ((s1op == `OPleft) ? ((forwarded[2]==1) ? writedata[((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))] : regfile[s0src1][((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))]) : 
           (s1op == `OPright) ? ((forwarded[2]==1) ? writedata[((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))] : regfile[s0src1][((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))]) :
         (forwarded[2]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src1][(((i+1)*16)-1):(16*i)]), ((s1op == `OPleft) ? ((forwarded[3]==1) ? writedata[((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))] : regfile[s0src2][((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))]) : 
           (s1op == `OPright) ? ((forwarded[3]==1) ? writedata[((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))] : regfile[s0src2][((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))]) :
@@ -244,6 +244,7 @@ module processor(halt, reset, clk);
       if ((s0op == `OPret) && ~((s1op == `OPjumpf) && (s1srcval2 == 0))) begin retaddr <= {retaddr[63:48], retaddr[63:16]}; s0op <= `OPnoop; end
       s1regdst <= s0regdst;
       s1op <= s0op;
+      s1ir <= s0ir;
     end
   
   //ALU phase (s2regdest)
