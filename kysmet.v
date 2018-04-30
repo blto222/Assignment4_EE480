@@ -196,7 +196,7 @@ module processor(halt, reset, clk);
           (forwarded[3]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src2][(((i+1)*16)-1):(16*i)];
       end*/
       //Processing Element Instantiation utilizing source1 and source2
-      PE PE(clk, reset, {clk, s1ir `addr, regdst, op, forwarded},
+      PE PE(clk, reset, {clk, s1ir `addr, regdst, op, forwarded}, regfile[s0regdst][(((i+1)*16)-1):(16*i)],
             ((s0op == `OPleft) ? ((forwarded[2]==1) ? writedata[((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))] : regfile[s0src1][((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))]) : 
              (s0op == `OPright) ? ((forwarded[2]==1) ? writedata[((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))] : regfile[s0src1][((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))]) :
              (forwarded[2]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src1][(((i+1)*16)-1):(16*i)]), 
@@ -264,7 +264,7 @@ endmodule
 
 
 
-module PE(clk, reset, control, source1, source2, datain, en, dataout, halt);
+module PE(clk, reset, control, dstval, source1, source2, datain, en, dataout, halt);
   input clk, reset;
   input wire [22:0] control;     //control[0:3] will be value forwarding for input registers 1 and 2. The rest should be the 
                                 // destination register, opcode, and anything else other than actual register data that needs
@@ -279,9 +279,12 @@ module PE(clk, reset, control, source1, source2, datain, en, dataout, halt);
   output en;
   output reg `WORD dataout;
   output reg halt;
+  input wire `WORD dstval;
+  
+  reg `WORD procmem `MEMSIZE;
   
   wire `WORD res;
-  reg `WORD srcval1, srcval2, dstval, s2val;
+  reg `WORD srcval1, srcval2, s2val;
   reg `WORD s0regdst, s1regdst;
   reg `ENSTK enable;
   reg `OP s0op, s1op, s1op2;
@@ -295,7 +298,8 @@ module PE(clk, reset, control, source1, source2, datain, en, dataout, halt);
     s0regdst = 4'b0000;
     s1regdst = 4'b0000;
     //s2regdst = 4'b0000;
-    enable = 32'h00000001;
+    enable = 32'h11111111;
+    $readmemh2(procmem, 0, 65535); 
     //Possibly memreading for registers? Might do that in the CU though.
   end
   
@@ -334,14 +338,16 @@ module PE(clk, reset, control, source1, source2, datain, en, dataout, halt);
       s1regdst <= s0regdst;   //potentially taken care of by CU (data sent to CU to store)
       s1srcval1 <= srcval1;
       s1srcval2 <= srcval2;
+      s1dstval <= dstval;
       if (s1op == `OPtrap) halt <= 1;
     end
   
   always @(posedge clk) if (!halt) begin
-    s2val <= res;
+    s2val <= (s1op == `OPload) ? procmem[s1srcval1] : res;
     //s2regdst <= s1regdst;   //Potentially taken care of by CU
+    if (s1op == `OPstore) procmem[s1srcval1] <= s1dstval;
     if (s1op == `OPtrap) halt <= 1;
-    dataout <= res;
+    dataout <= (s1op == `OPload) ? procmem[s1srcval1] : res;
   end
 
   
