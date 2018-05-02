@@ -1,0 +1,391 @@
+`define WORD        [15:0]
+`define Opcode      [15:12]
+`define Dest        [11:8]
+`define Sreg        [7:4]
+`define Treg        [3:0]
+`define addr        [7:0]
+`define REGSIZE     [15:0]
+`define MEMSIZE     [65535:0]
+`define RNAME       [3:0]
+`define OP          [5:0]
+`define CALLST      [63:0]
+`define ENSTK       [31:0]
+
+`define Nproc     2
+
+//Non-extended OPcodes
+`define OPadd      6'b000100
+`define OPslt      6'b000101
+`define OPsra      6'b000110
+`define OPmul      6'b000111
+`define OPand      6'b001000
+`define OPor       6'b001001
+`define OPxor      6'b001010
+`define OPsll      6'b001011
+
+`define OPli8      6'b001100
+`define OPlu8      6'b001101
+
+//No-register instructions
+`define OPtrap     6'b010000
+`define OPret      6'b010001
+`define OPpushen   6'b010010
+`define OPpopen    6'b010100
+`define OPallen    6'b011000
+
+//2-register instructions
+`define OPlnot     6'b100000
+`define OPneg      6'b100001
+`define OPleft     6'b100011
+`define OPright    6'b100100
+`define OPgor      6'b100101
+`define OPload     6'b101000
+`define OPstore    6'b101001
+
+//Jump instructions
+`define OPcall     6'b110000
+`define OPjump     6'b110001
+`define OPjumpf    6'b110011
+
+`define OPnoop     6'b000000        //No-op instruction.
+
+module decode (opout, regdst, skip, opin, ir);
+  output reg `OP opout;
+  output reg `RNAME regdst;
+  output reg skip;
+  input wire `OP opin;
+  input `WORD ir;
+  
+  always @(opin, ir)begin
+    case (ir `Opcode)
+      4'b0100: begin opout <= `OPadd; regdst <= ir `Dest; end
+      4'b0101: begin opout <= `OPslt; regdst <= ir `Dest; end
+      4'b0110: begin opout <= `OPsra; regdst <= ir `Dest; end
+      4'b0111: begin opout <= `OPmul; regdst <= ir `Dest; end
+      4'b1000: begin opout <= `OPand; regdst <= ir `Dest; end
+      4'b1001: begin opout <= `OPor;  regdst <= ir `Dest; end
+      4'b1010: begin opout <= `OPxor; regdst <= ir `Dest; end
+      4'b1011: begin opout <= `OPsll; regdst <= ir `Dest; end
+      4'b1100: begin opout <= `OPli8; regdst <= ir `Dest; end
+      4'b1101: begin opout <= `OPlu8; regdst <= ir `Dest; end
+      
+      4'b0000: begin
+        case (ir `Treg)
+          4'b0000: opout <= `OPtrap;
+          4'b0001: opout <= `OPret;
+          4'b0010: opout <= `OPpushen;
+          4'b0100: opout <= `OPpopen;
+          4'b1000: opout <= `OPallen;
+        endcase
+        regdst <= 0;
+      end
+        
+      4'b0001: begin
+        case (ir `Treg)
+          4'b0000: opout <= `OPcall;
+          4'b0001: opout <= `OPjump;
+          4'b0011: opout <= `OPjumpf;
+        endcase
+        skip <= 0;
+        regdst <= 0;
+      end
+      
+      4'b0010: begin
+        case (ir `Treg)
+          4'b0000: opout <= `OPlnot;
+          4'b0001: opout <= `OPneg;
+          4'b0010: opout <= `OPleft;
+          4'b0011: opout <= `OPright;
+          4'b0100: opout <= `OPgor;
+          4'b1000: opout <= `OPload;
+          4'b1001: opout <= `OPstore;
+        endcase
+        regdst <= ir `Dest;
+      end
+      default: opout <= `OPnoop;
+    endcase
+  end
+endmodule
+
+module alu(result, op, in1, in2, addr);
+  output reg `WORD result;
+  input wire `OP op;
+  input wire `WORD in1, in2;
+  input wire `addr addr;
+  
+  always @(op, in1, in2, addr) begin
+    case (op)
+      `OPadd: begin result <= in1 + in2;   end
+      `OPslt: begin result <= $signed(in1) < $signed(in2); end
+      `OPsra: begin result <= $signed(in1) >>> (in2 & 15); end
+      `OPmul: begin result <= in1 * in2; end
+      `OPand: begin result <= in1 & in2; end
+      `OPor:  begin result <= in1 | in2; end
+      `OPxor: begin result <= in1 ^ in2; end
+      `OPsll: begin result <= in1 << (in2 & 15); end
+      `OPli8: begin result <= addr; result[15:8] <= {8{addr [7]}}; end
+      `OPlu8: begin result <= (in1 & 16'h00ff) | (addr << 8); end    
+      `OPneg: begin result <= -in1; end
+      `OPlnot: begin result <= ~in1; end
+      `OPleft: begin result <= in1; end
+      `OPright: begin result <= in1; end
+      `OPload: ;
+      `OPstore: ;
+      default: begin result = in1; end
+    endcase
+  end
+  
+  
+endmodule
+
+module processor(halt, reset, clk);
+  output wire halt;
+  input reset, clk;
+  
+  reg [`Nproc*16-1:0] regfile `REGSIZE;
+  reg `WORD mainmem `MEMSIZE;
+  reg `WORD datamem `MEMSIZE;
+  reg `WORD ir, srcval1, srcval2, dstval, newpc;
+  reg rrsquash;
+  wire `OP op;
+  wire `RNAME regdst;
+  wire `WORD res;
+  wire skip;
+  reg `OP s0op, s1op, s2op, s1op2;
+  reg `RNAME s0src1, s0src2, s0dst, s0regdst, s1regdst, s2regdst;
+  reg `WORD pc;
+  reg `WORD s1srcval1, s1srcval2, s1dstval;
+  reg `WORD s0ir, s1ir;
+  reg `addr s1addr;
+  reg `CALLST retaddr;
+  reg [3:0] forwarded;
+  wire [`Nproc-1 : 0] atleast1enabled;
+  reg [`Nproc*16-1:0] writedata;
+
+  reg `WORD count;
+  
+  /*TEMPORARY*/
+  reg [`Nproc*16-1:0] datain;
+  wire [`Nproc*16-1:0] dataout;
+  reg `WORD source1, source2;
+  reg `WORD gor;
+  /*TEMPORARY*/
+  
+  always @(reset) begin
+    pc = 0;
+    count = 0;
+    s0op = `OPnoop;
+    s1op = `OPnoop;
+    s2op = `OPnoop;
+    s0regdst = 4'b0000;
+    s1regdst = 4'b0000;
+    s2regdst = 4'b0000;
+    $readmemh0(regfile, 0, 15);
+    $readmemh1(mainmem, 0, 65535); 
+  end
+  
+  decode mydecode(op, regdst, skip, s0op, ir);
+  
+  //ATTEMPT TO IMPLEMENT PROCESSORS.
+  genvar i,j;
+  
+  generate
+    //For loop attempts to complicatedly decide what goes into source1 and source 2. Tries to look for left and right funcitons with value forwarding.
+    for (i=0; i < `Nproc; i=i+1) begin : Processor
+      //Processing Element Instantiation utilizing source1 and source2
+      // module PE(clk, reset, control, dstval, source1, source2, datain, en, dataout, halt);
+      PE PE(clk, 
+            reset, 
+            {clk, s1ir `addr, regdst, op, forwarded}, 
+            regfile[s0regdst][(((i+1)*16)-1):(16*i)],
+            ((s0op == `OPleft) ? ((forwarded[2]==1) ? writedata[((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))] : regfile[s0src1][((((i+`Nproc-1)%`Nproc +1)*16)-1):(16*(((i+`Nproc-1)%`Nproc)))]) : 
+             (s0op == `OPright) ?((forwarded[2]==1) ? writedata[((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))] : regfile[s0src1][((((i+1)%`Nproc +1)*16)-1):(16*((i+1)%`Nproc))]) :
+             (forwarded[2]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src1][(((i+1)*16)-1):(16*i)]), 
+            (forwarded[3]==1) ? writedata[(((i+1)*16)-1):(16*i)] : regfile[s0src2][(((i+1)*16)-1):(16*i)], 
+            writedata[(((i+1)*16)-1):(16*i)], 
+            atleast1enabled[i], 
+            dataout[(((i+1)*16)-1):(16*i)], 
+            halt);
+      
+      
+    end
+    
+  endgenerate
+  
+  always @(*) ir = mainmem[pc];
+  
+  always @(*) newpc = (((s0op == `OPcall) || (s0op == `OPjump)) ? ir :
+                       (s1op ==`OPjumpf && atleast1enabled == 0) ? s0ir : 
+                       (s1op == `OPjumpf) ? pc :
+                       ((op == `OPret)) ? retaddr[15:0] :
+                       (pc + 1));
+  
+  always @(*) forwarded[0] = (s1regdst && (s0src1 == s1regdst)) ? 1 : 0;
+    
+  always @(*) forwarded[1] = (s1regdst && (s0src2 == s1regdst)) ? 1 : 0;
+  
+  always @(*) forwarded[2] = (s2regdst && (s0src1 == s2regdst)) ? 1 : 0;
+  
+  always @(*) forwarded[3] = (s2regdst && (s0src2 == s1regdst)) ? 1 : 0;
+  
+  //Instruction Fetch
+  always @(posedge clk) begin
+    if (!halt && s0op != `OPtrap) begin
+      //Potentially stuff about enable blocks
+      s0op <= op;
+      s0regdst <= regdst;  
+      s0src1 <= (op == `OPlu8) ? ir `Dest : ir `Sreg;
+      s0src2 <= ir `Treg;
+      s0dst <= ir `Dest;
+      s0ir <= ir;
+      pc <= newpc;
+    end
+  end
+  
+  always @(posedge clk)
+   
+    if (!halt) begin
+       count <= count + 1;
+      if ((s0op == `OPcall) && ~((s1op == `OPjumpf) && (s1srcval2 == 0))) begin retaddr <= {retaddr[47:0], pc + 16'h0001}; s0op <= `OPnoop; end
+      if ((s0op == `OPret) && ~((s1op == `OPjumpf) && (s1srcval2 == 0))) begin retaddr <= {retaddr[63:48], retaddr[63:16]}; s0op <= `OPnoop; end
+      s1regdst <= s0regdst;
+      s1op <= s0op;
+      s1ir <= s0ir;
+    end
+  
+  //ALU phase (s2regdest)
+always @(posedge clk) if (!halt) begin
+  
+  
+  s2regdst <= s1regdst;
+  writedata <=  dataout;      //need to figure out how to do the load and store.
+              //figure out the store
+end
+  
+  // Register Write
+always @(posedge clk) if (!halt) begin
+  if (s2regdst > 2)
+  begin 
+      $display("On clock cycle %d", count );
+      $display("wrote out the value %b ",dataout);
+      
+      regfile[s2regdst] <= dataout;    //need to figure out how to do the load and store.
+  end 
+end
+endmodule
+
+
+
+
+
+module PE(clk, reset, control, dstval, source1, source2, datain, en, dataout, halt);
+  input clk, reset;
+  input wire [22:0] control;     //control[0:3] will be value forwarding for input registers 1 and 2. The rest should be the 
+                                // destination register, opcode, and anything else other than actual register data that needs
+                                // to be passed in. 
+                                //control[9:4] will be the opcode from CU. 
+                                //control[13:10] will be register destination (might not need it).
+                                //control[21:14] is the 8-bit immediate value being passed in.
+                                //control[22] is a copy of the clk bit. I wanted to make sure it was working cuz it doesnt' seem to show up.
+  input wire `WORD source1;  //Register value of Sreg passed in from CU
+  input wire `WORD source2;  //Register value of Treg passed in from CU
+  input wire `WORD datain;
+  output en;
+  output reg `WORD dataout;
+  output reg halt;
+  input wire `WORD dstval;
+  
+  reg `WORD procmem `MEMSIZE;
+  
+  wire `WORD res;
+  reg `WORD srcval1, srcval2, s2val;
+  reg `WORD s0regdst, s1regdst;
+  reg `ENSTK enable;
+  reg `OP s0op, s1op, s1op2;
+  reg `RNAME regdst;
+  reg `WORD s1srcval1, s1srcval2, s1dstval;
+  
+  always @(reset) begin
+    halt = 0;
+    s0op = `OPnoop;
+    s1op = `OPnoop;
+    s0regdst = 4'b0000;
+    s1regdst = 4'b0000;
+    //s2regdst = 4'b0000;
+    enable = 32'h11111111;
+    $readmemh2(procmem, 0, 65535); 
+    //Possibly memreading for registers? Might do that in the CU though.
+  end
+  
+  alu myalu(res, s1op, s1srcval1, s1srcval2, control[21:14]);
+  
+  // compute srcval1, with value forwarding...
+  always @(*) srcval1 = ((control[0] == 1) ? res :
+                         ((control[2] == 1) ? s2val :
+                            source1));
+  
+  // compute srcval2, with value forwarding...
+  always @(*) srcval2 = ((control[1] == 1) ? res :
+                         ((control[3] == 1) ? s2val :
+                         source2));
+  
+  // compute dstval, with value forwarding. May be taken care of in CU
+ 
+  
+  //What might have been done in the instruction fetch stage.
+  always @(posedge clk) begin
+    if (!halt && s0op != `OPtrap) begin
+      if ((control[9:4] == `OPpushen) && !(s1op == `OPjumpf)) begin enable <= ((enable << 1) | (enable & 1)); end
+      if ((control[9:4] == `OPpopen) && !(s1op == `OPjumpf)) begin enable <= enable >> 1; end
+      if ((control[9:4] == `OPallen) && !(s1op == `OPjumpf)) begin enable <= enable | 1; end
+      s0op <= control[9:4];
+      s0regdst <= control[11:8];    //could be taken care of in CU if registers are.
+    end
+  end
+  
+  // what would be done in the register read phase.
+  always @(posedge clk)
+    if (!halt) begin
+      s1op <= s0op;
+      s1regdst <= s0regdst;   //potentially taken care of by CU (data sent to CU to store)
+      s1srcval1 <= srcval1;
+      s1srcval2 <= srcval2;
+      s1dstval <= dstval;
+      if (s1op == `OPtrap) halt <= 1;
+    end
+  
+  always @(posedge clk) if (!halt) begin
+    s2val <= (s1op == `OPload) ? procmem[s1srcval1] : res;
+    //s2regdst <= s1regdst;   //Potentially taken care of by CU
+    if (s1op == `OPstore) procmem[s1srcval1] <= s1dstval;
+    if (s1op == `OPtrap) halt <= 1;
+    dataout <= (s1op == `OPload) ? procmem[s1srcval1] : res;
+  
+  end
+
+  
+endmodule
+
+
+
+
+ 
+module testbench;
+reg reset = 0;
+reg clk = 0;
+wire halted;
+integer i = 0;
+processor PE(halted, reset, clk);
+initial begin
+  $dumpfile;
+  $dumpvars(0, PE);
+  #10 reset = 1;
+  #10 reset = 0;
+  while (!halted && (i < 200)) begin
+    #10 clk = 1;
+    #10 clk = 0;
+    i=i+1;
+  end
+  $finish;
+end
+endmodule
