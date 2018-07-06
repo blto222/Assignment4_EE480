@@ -32,3 +32,5 @@ xor    $u6, $u1, $u2
 
 
 trap
+
+This is for testing pull requests.
